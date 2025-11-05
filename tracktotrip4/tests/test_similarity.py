@@ -3,10 +3,10 @@ Unit tests for similarity module
 """
 import math
 import unittest
-from tracktotrip3.similarity import segment_similarity
-from tracktotrip3.similarity import normalize, line_distance_similarity, line_similarity
-from tracktotrip3.similarity import line, angle_similarity, distance_to_line, distance_similarity
-from tracktotrip3 import Segment, Point
+from tracktotrip4.similarity import segment_similarity
+from tracktotrip4.similarity import normalize, line_distance_similarity, line_similarity
+from tracktotrip4.similarity import line, angle_similarity, distance_to_line, distance_similarity
+from tracktotrip4 import Segment, Point
 
 class TestSimilarity(unittest.TestCase):
     """

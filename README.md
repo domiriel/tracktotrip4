@@ -1,5 +1,5 @@
 # TrackToTrip3
-*TrackToTrip3* is a Python 3 adaptation of the [TrackToTrip](https://github.com/ruipgil/TrackToTrip) library used to process GPS tracks.
+*TrackToTrip4* is a fork of [TrackToTrip3](https://github.com/dserafim1999/tracktotrip3), a Python 3 library used to process, simplify and clean GPS tracks. The original TrackToTrip3 library is no longer maintained, and this fork aims to keep it up to date with the latest Python versions and dependencies, plus adding new features and improvements.
 
 The main goals are to transform a (gpx) **track into a trip**.
 
@@ -12,13 +12,13 @@ The main goals are to transform a (gpx) **track into a trip**.
 
 ## Installing
 
-You can install TrackToTrip3 by running the following command:
+You can install TrackToTrip4 by running the following command:
 
 ```
  $ python setup.py install
 ```
 
-**NOTE:** TrackToTrip3 requires Microsoft Visual C++ 14.0. It can be found using the [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/?q=build+tools)
+**NOTE:** TrackToTrip4 requires Microsoft Visual C++ 14.0. It can be found using the [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/?q=build+tools)
 
 
 **Python 3.x** is required.
@@ -32,7 +32,7 @@ The starting points are the [Track](../master/tracktotrip3/track.py), [Segment](
 Can be loaded from a GPX file:
 
 ```python
-from tracktotrip3 import Track, Segment, Point
+from tracktotrip4 import Track, Segment, Point
 
 track = Track.from_gpx('file_to_track.gpx')
 ```

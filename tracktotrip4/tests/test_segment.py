@@ -1,6 +1,6 @@
 import gpxpy
 import unittest
-from tracktotrip3 import Point, Segment
+from tracktotrip4 import Point, Segment
 from datetime import datetime, timedelta
 
 def loadFile(name):

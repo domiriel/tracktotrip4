@@ -18,16 +18,16 @@ VERSION = '0.1.1'
 
 
 setup(
-    name='tracktotrip3',
-    packages=['tracktotrip3'],
+    name='tracktotrip4',
+    packages=['tracktotrip4'],
     version=VERSION,
     description='Track processing library for Python 3',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    author='Daniel Serafim, Rui Gil',
+    author='Daniel Gonçalves, Daniel Serafim, Rui Gil',
     author_email='dserafim1999@gmail.com',
-    url='https://github.com/dserafim1999/tracktotrip3',
-    download_url='https://github.com/dserafim1999/tracktotrip3/releases/tag/%s' % VERSION,
+    url='https://github.com/domiriel/tracktotrip4',
+    download_url='https://github.com/domiriel/tracktotrip4/releases/tag/%s' % VERSION,
     keywords=['track', 'trip', 'GPS', 'GPX'],
     classifiers=[],
     scripts=[

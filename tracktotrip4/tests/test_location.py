@@ -2,8 +2,8 @@
 Location module unit tests
 """
 import unittest
-from tracktotrip3 import Point
-from tracktotrip3.location import update_location_centroid, compute_centroid
+from tracktotrip4 import Point
+from tracktotrip4.location import update_location_centroid, compute_centroid
 
 class TestLocation(unittest.TestCase):
     """

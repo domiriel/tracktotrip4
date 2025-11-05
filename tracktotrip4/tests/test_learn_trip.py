@@ -1,5 +1,5 @@
-from tracktotrip3 import learn_trip, Track, Segment, Point
-from tracktotrip3.utils import estimate_meters_to_deg
+from tracktotrip4 import learn_trip, Track, Segment, Point
+from tracktotrip4.utils import estimate_meters_to_deg
 from datetime import datetime, timedelta
 import unittest
 
