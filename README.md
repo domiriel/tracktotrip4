@@ -1,4 +1,4 @@
-# TrackToTrip3
+# TrackToTrip4
 *TrackToTrip4* is a fork of [TrackToTrip3](https://github.com/dserafim1999/tracktotrip3), a Python 3 library used to process, simplify and clean GPS tracks. The original TrackToTrip3 library is no longer maintained, and this fork aims to keep it up to date with the latest Python versions and dependencies, plus adding new features and improvements.
 
 The main goals are to transform a (gpx) **track into a trip**.
