@@ -13,7 +13,7 @@ def read(filename):
     with open(os.path.join(os.path.dirname(__file__), filename), 'r', encoding='utf16') as f:
         return f.read().splitlines()
 
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 
 
 
