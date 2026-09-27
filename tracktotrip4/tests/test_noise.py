@@ -76,12 +76,47 @@ class RemoveSpikesTests(unittest.TestCase):
         rec.walk(300, 0)
         self.assertDropped(rec.points, remove_spikes(rec.points), [bad])
 
+    def test_sideways_blips_are_dropped_at_any_sampling_rate(self):
+        # walking south; one or two points jump west, then back on course
+        for dt in (1, 5, 10):
+            for west in (40, 80, 150):
+                for count in (1, 2):
+                    with self.subTest(dt=dt, west=west, count=count):
+                        points = [point(-west if 40 <= i < 40 + count else 0, -1.4 * dt * i, dt * i)
+                                  for i in range(80)]
+                        self.assertDropped(points, remove_spikes(points), points[40:40 + count])
+
+    def test_small_sideways_wobble_is_left_to_smoothing(self):
+        points = [point(-20 if i == 40 else 0, -14 * i, 10 * i) for i in range(80)]
+        self.assertEqual(ids(remove_spikes(points)), ids(points))
+
+    def test_turning_a_corner_is_kept(self):
+        rec = recorder(dt=10).walk(0, -500).walk(-500, 0).walk(0, 500)
+        self.assertEqual(ids(remove_spikes(rec.points)), ids(rec.points))
+
+    def test_pulling_away_round_a_corner_is_kept(self):
+        # stopped, then a point every 10 s: 100 m east, then 100 m north
+        points = [point(0, 0, 10 * i) for i in range(6)]
+        points += [point(100, 0, 60), point(100, 100, 70), point(100, 200, 80), point(100, 300, 90)]
+        self.assertEqual(ids(remove_spikes(points)), ids(points))
+
+    def test_walking_into_a_side_street_and_back_is_kept(self):
+        rec = recorder(dt=10).walk(0, -500).walk(-60, 0).walk(60, 0).walk(0, -500)
+        self.assertEqual(ids(remove_spikes(rec.points)), ids(rec.points))
+
     def test_spikes_at_the_start_and_end_are_dropped(self):
         rec = recorder().walk(400, 0)
         first = point(xy(rec.points[0])[0] - 30, 250, -1)
         last = point(xy(rec.points[-1])[0], -250, rec.t + 1)
         points = [first] + rec.points + [last]
         self.assertDropped(points, remove_spikes(points), [first, last])
+
+    def test_recording_ending_on_a_bad_fix_loses_it(self):
+        rec = recorder().walk(400, 0)
+        x = xy(rec.points[-1])[0]
+        bad = [point(x, -250, rec.t + 1), point(x + 5, -255, rec.t + 2)]
+        points = rec.points + bad
+        self.assertDropped(points, remove_spikes(points), bad)
 
     def test_jump_after_losing_signal_is_kept(self):
         # underground: resumes 2 km on, 3 minutes later, and goes on from there

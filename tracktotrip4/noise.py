@@ -20,6 +20,14 @@ MIN_SPIKE_SPEED = 5.0
 #: Recent steps whose median speed is the reference.
 RECENT_STEPS = 5
 
+#: A blip (points off the line of travel that come straight back) is a spike
+#: when going through it is this many times longer than going straight...
+DETOUR_RATIO = 2.0
+
+#: ...and would need this many times the recent speed. A real side trip
+#: takes the time it takes to walk it.
+DETOUR_SPEED_FACTOR = 2.0
+
 
 def _distance(a, b):
     return _metres(a.lat, a.lon, b.lat, b.lon)
@@ -61,6 +69,10 @@ def _forward(points, min_distance):
     i = 1
     while i < n:
         anchor, point = kept[-1], points[i]
+        blip = _blip(kept, point, median(recent), min_distance)
+        if blip:
+            del kept[-blip:]
+            continue
         limit = max(SPEED_FACTOR * median(recent), MIN_SPIKE_SPEED)
         if plausible(anchor, point, limit):
             recent.append(_distance(anchor, point) / _seconds(anchor, point))
@@ -79,16 +91,9 @@ def _forward(points, min_distance):
                 break
         if back is not None:
             i = back
-            continue
-
-        # Or the track is coming back from a spike it reached slowly (after
-        # a recording gap): the last points kept stand out from the line
-        # between the point before them and this one, plausible from it
-        spike = _reached_slowly(kept, point, limit, plausible, min_distance)
-        if spike:
-            del kept[-spike:]
-        elif n - i <= SPIKE_POINTS:
-            break           # the recording ends on the jump
+        elif n - i <= SPIKE_POINTS and \
+                all(_distance(point, p) < min_distance for p in points[i + 1:]):
+            break           # the recording ends on a jump to one spot
         else:
             recent.append(_distance(anchor, point) / _seconds(anchor, point))
             kept.append(point)  # it stays there: a real relocation (lost signal)
@@ -96,20 +101,28 @@ def _forward(points, min_distance):
     return kept
 
 
-def _reached_slowly(kept, point, limit, plausible, min_distance):
-    """ How many of the last points kept form a spike that `point` comes back
-    from (0 if none) """
+def _blip(kept, point, speed, min_distance):
+    """ How many of the last points kept (0 if none) form a blip that `point`
+    comes back from: they all stand out from the line between the point
+    before them and `point`, and going through them is a detour much longer,
+    and much faster, than the track goes. Catches spikes too slow to look
+    like jumps: with sparse sampling, or reached or left across a gap """
     for count in range(1, min(SPIKE_POINTS, len(kept) - 1) + 1):
-        base = kept[-1 - count]
-        if plausible(base, point, limit):
-            return count if _is_spike(kept[-count:], base, point, min_distance) else 0
+        base, run = kept[-1 - count], kept[-count:]
+        if not _is_spike(run, base, point, min_distance):
+            continue
+        via = [base] + run + [point]
+        detour = sum(_distance(a, b) for a, b in zip(via, via[1:]))
+        if detour >= DETOUR_RATIO * _distance(base, point) and \
+                detour / _seconds(base, point) >= DETOUR_SPEED_FACTOR * speed:
+            return count
     return 0
 
 
 def remove_spikes(points, min_distance=30):
-    """ Drops spikes: up to `SPIKE_POINTS` consecutive points that jump more
-    than `min_distance` meters away and come back, far faster than the track
-    was moving (both ways, or one way when the other spans a recording gap). A jump that the following points confirm (a
+    """ Drops spikes: up to `SPIKE_POINTS` consecutive points that jump at
+    least `min_distance` meters off the way and come back, far faster than
+    the track was moving, or as a sudden sideways blip (see `_blip`). A jump that the following points confirm (a
     fix recovered after losing signal) is kept. Runs in linear time
 
     Args:

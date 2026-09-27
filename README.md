@@ -166,9 +166,12 @@ consecutive segments (in time order) that start at most `join_max_gap` seconds
 joined: a logger restarting, or a day split over files, no longer splits a trip.
 Noise removal then drops spikes, as well as points out of time order: up to 3
 consecutive points that jump at least `spike_min_distance` meters (30) off the
-way and come back, far faster than the track was moving (both ways, or one way
-when the other spans a recording gap). A jump that the following points confirm,
-such as a fix recovered after losing signal, is kept. Both steps are linear;
+way and come back, either far faster than the track was moving, or as a sudden
+sideways blip: a detour at least twice as long as going straight, and needing at
+least twice the recent speed (which also catches spikes with sparse sampling, and
+spikes reached or left across a recording gap). A jump that the following points
+confirm, such as a fix recovered after losing signal, is kept, and so are
+corners and real side trips. Both steps are linear;
 `spike_min_distance=None` keeps spikes.
 
 Tests (offline, with dependencies installed):
