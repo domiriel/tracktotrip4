@@ -122,3 +122,32 @@ optional arguments:
 ## License
 
 [MIT license](../master/LICENSE)
+
+## Canonical learning scalability (0.2.0)
+
+`learn_trip` retains the best-match rule (maximum directional score, threshold
+0.7, last candidate wins equal scores). It does not mutate input trips. Reusable
+`SegmentIndex` objects avoid rebuilding the new trip's R-tree for each candidate;
+`SegmentIndexCache` bounds retained indexes by points and entries and must be closed.
+A conservative expanded-edge-box upper bound skips candidates that cannot beat the
+current best score. Endpoint-only heuristics are deliberately not used: partial
+and reversed routes remain eligible.
+
+Merging queries nearby points through an index while preserving the previous
+point-order and direction rules. Dense overlapping geometry can still be costly;
+these changes do not promise constant-time matching for arbitrary routes.
+
+`learn_trip(..., max_points=2048)` bounds the derived canonical geometry after
+ordinary simplification. When the cap is reached, greatest-deviation subdivision
+retains endpoints and reports the additional planar error in degrees as
+`segment.representation_error` and in the optional `stats` dictionary. This is an
+approximation of derived geometry only; keep original trip geometry for rebuilding.
+Pass `max_points=None` to disable this cap for strict legacy geometry comparisons.
+`stats` also reports candidate, scored and pruned counts. A bound on representation
+size can change later matching decisions; compare those decisions on your fixtures.
+
+Tests (offline, with dependencies installed):
+
+```sh
+python -m unittest discover -s tracktotrip4/tests
+```

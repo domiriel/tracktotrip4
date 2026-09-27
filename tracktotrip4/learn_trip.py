@@ -2,7 +2,9 @@
 Learns trips
 """
 import numpy as np
-from .similarity import segment_similarity
+from .similarity import segment_similarity, SegmentIndex
+from contextlib import ExitStack
+from copy import deepcopy
 
 def complete_trip(canonical_trips, from_point, to_point, distance_thr, debug = False):
     """ Completes a trip based on set of canonical trips
@@ -45,70 +47,81 @@ def complete_trip(canonical_trips, from_point, to_point, distance_thr, debug = F
     return aa
 
 
-def learn_trip(current, current_id, canonical_trips, insert_canonical, update_canonical, eps, distance_thr, debug = False):
-    """Learns a trip against of other canonical trips
+def learn_trip(current, current_id, canonical_trips, insert_canonical, update_canonical,
+               eps, distance_thr, debug=False, index_cache=None, stats=None, max_points=2048):
+    """Select the best legacy match, preserving last-candidate tie breaking.
 
-    Args:
-        current (:obj:`Track`): current trip
-        current_id (int): current trip (db) id
-        canonical_trips (:obj:`list` of :obj:`Track`): list of canonical trips
-        insert_canonical: Function to insert a new canonical trip, with the
-            signature: (:obj:`Track`, int) -> void
-        update_canonical: Function to update an existing canonical trip, with
-            the signature: (int, :obj:`Track`, int) -> void
+    index_cache optionally supplies get(segment, threshold) -> SegmentIndex and
+    owns its returned indexes. Source segments are never mutated. Returns the
+    canonical ID supplied by insert_canonical, or the matched existing ID.
     """
+    stats = stats if stats is not None else {}
+    stats.update(candidates=0, scored=0, pruned=0)
+    best = None
+    best_score = 0.7
+    with ExitStack() as stack:
+        current_index = stack.enter_context(SegmentIndex(current, distance_thr))
+        for trip_id, trip in canonical_trips:
+            stats['candidates'] += 1
+            candidate_index = (index_cache.get(trip, distance_thr) if index_cache else
+                               SegmentIndex(trip, distance_thr))
+            try:
+                upper = max(candidate_index.upper_bound(current), current_index.upper_bound(trip))
+                if upper + 1e-12 < best_score:
+                    stats['pruned'] += 1
+                    continue
+                score = max(segment_similarity(trip, current, T=distance_thr, prepared=candidate_index)[0],
+                            segment_similarity(current, trip, T=distance_thr, prepared=current_index)[0])
+                stats['scored'] += 1
+                if score >= best_score:
+                    best, best_score = (trip_id, trip), score
+            finally:
+                if index_cache is None:
+                    candidate_index.close()
+    if best is not None:
+        trip_id, original = best
+        trip = deepcopy(original)
+        trip.merge_and_fit(current)
+        trip.simplify(eps, 0, 0, topology_only=True)
+        bound_representation(trip, max_points)
+        stats["representation_error"] = trip.representation_error
+        update_canonical(trip_id, trip, current_id)
+        return trip_id
+    trip = deepcopy(current)
+    trip.simplify(eps, 0, 0, topology_only=True)
+    bound_representation(trip, max_points)
+    stats["representation_error"] = trip.representation_error
+    return insert_canonical(trip, current_id)
 
-    if len(canonical_trips) == 0:
-        current.simplify(eps, 0, 0, topology_only=True)
-        insert_canonical(current, current_id)
-        if debug:
-            print(("inserting trip %d" % len(current.points)))
-    else:
-        canonical_trips_a = [
-            (trip_id, trip, segment_similarity(trip, current,  T=distance_thr, debug=debug))
-            for trip_id, trip in canonical_trips
-            ]
-        canonical_trips_b = [
-            (trip_id, trip, segment_similarity(current, trip, T=distance_thr, debug=debug))
-            for trip_id, trip in canonical_trips
-            ]
 
-        canonical_trips = []
-        for i in range(len(canonical_trips_a)):
-            ct_a = canonical_trips_a[i]
-            ct_b = canonical_trips_b[i]
-            canonical_trips.append(ct_a if ct_a[2][0] > ct_b[2][0] else ct_b)
+def bound_representation(trip, max_points):
+    """Bound derived geometry only; return maximum planar error in degrees.
 
-        canonical_trips = list(reversed(sorted(canonical_trips, key=lambda t: t[2][0])))
-
-        trip_id, trip, (similarity, _) = canonical_trips[0]
-
-        if debug: 
-            print("similarity = %f" % similarity)
-
-        if similarity >= 0.7:
-            # Same trip, fit all segments
-            trip.merge_and_fit(current)#, diffs)
-            trip.simplify(eps, 0, 0, topology_only=True)
-            update_canonical(trip_id, trip, current_id)
-            if debug:
-                print(("updating trip %d" % len(current.points)))
-
-        # elif similarity >= 0.3:
-        #     # Fit similar segments
-        #     orig = trip.copy()
-        #     trip.merge_and_fit(current)#, diffs, threshold=0.2)
-        #     trip.simplify(eps, 0, 0, topology_only=True)
-        #
-        #     current.merge_and_fit(orig)#, diffs, threshold=0.8)
-        #     current.simplify(eps, 0, 0, topology_only=True)
-        #
-        #     # updateCanonicalTrip(tripId, trip, currentTripId)
-        #     # updateCanonicalTrip(tripId, trip, currentTripId)
-
-        else:
-            # Insert new canonical representation
-            current.simplify(eps, 0, 0, topology_only=True)
-            insert_canonical(current, current_id)
-            if debug:
-                print(("inserting trip %d" % len(current.points)))
+    Split the remaining edge with greatest deviation until the budget is spent.
+    Original per-trip geometry remains untouched and can rebuild this projection.
+    """
+    import heapq
+    from .similarity import distance_to_line
+    if max_points is None or len(trip.points) <= max_points:
+        trip.representation_error = 0.0
+        return
+    if max_points < 2:
+        raise ValueError('Canonical point budget must be at least two')
+    points = trip.points
+    heap = []
+    def add(lo, hi):
+        if hi-lo <= 1:
+            return
+        a, b = points[lo].gen2arr(), points[hi].gen2arr()
+        error, split = max((distance_to_line(a, b, points[i].gen2arr()), i)
+                           for i in range(lo+1, hi))
+        heapq.heappush(heap, (-error, lo, hi, split))
+    kept = {0, len(points)-1}
+    add(0, len(points)-1)
+    while heap and len(kept) < max_points:
+        _, lo, hi, split = heapq.heappop(heap)
+        kept.add(split)
+        add(lo, split)
+        add(split, hi)
+    trip.representation_error = -heap[0][0] if heap else 0.0
+    trip.points = [points[i] for i in sorted(kept)]

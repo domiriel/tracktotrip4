@@ -216,49 +216,52 @@ def bounding_box_from(points, i, i1, thr, debug = False):
 
     return min_lat-thr, min_lon-thr, max_lat+thr, max_lon+thr
 
-def segment_similarity(A, B, T=CLOSE_DISTANCE_THRESHOLD, debug = False):
-    """Computes the similarity between two segments
+class SegmentIndex:
+    """Reusable, explicitly owned index of a segment's immutable coordinates."""
+    def __init__(self, segment, threshold):
+        self.threshold = threshold
+        self.coords = tuple(tuple(p.gen2arr()) for p in segment.points)
+        self.tree = index.Index()
+        for i in range(len(self.coords)-1):
+            self.tree.insert(i, bounding_box_from(segment.points, i, i+1, threshold))
 
-    Args:
-        A (:obj:`Segment`)
-        B (:obj:`Segment`)
-    Returns:
-        float: between 0 and 1. Where 1 is very similar and 0 is completely different
-    """
-    l_a = len(A.points)
-    l_b = len(B.points)
+    def close(self):
+        self.tree.close()
 
-    idx = index.Index()
-    dex = 0
-    for i in range(l_a-1):
-        idx.insert(dex, bounding_box_from(A.points, i, i+1, T), obj=[A.points[i], A.points[i+1]])
-        dex = dex + 1
+    def __enter__(self):
+        return self
 
-    prox_acc = []
+    def __exit__(self, *args):
+        self.close()
 
-    for i in range(l_b-1):
-        ti = B.points[i].gen2arr()
-        ti1 = B.points[i+1].gen2arr()
-        bb = bounding_box_from(B.points, i, i+1, T, debug)
-        intersects = idx.intersection(bb, objects=True)
-        n_prox = []
-        i_prox = 0
-        a = 0
-        for x in intersects:
-            a = a + 1
-            pi = x.object[0].gen2arr()
-            pi1 = x.object[1].gen2arr()
-            prox = line_similarity(ti, ti1, pi, pi1, T, debug)
-            i_prox = i_prox + prox
-            n_prox.append(prox)
+    def upper_bound(self, other):
+        # Each line contributes at most 1. A disjoint expanded box contributes 0.
+        # This is a conservative bound for the existing similarity, not a new
+        # endpoint/length heuristic that could discard partial-route matches.
+        count = len(other.points)-1
+        if count <= 0:
+            return 0.0
+        hits = sum(self.tree.count(bounding_box_from(other.points, i, i+1, self.threshold)) > 0
+                   for i in range(count))
+        return hits / count
 
-        if a != 0:
-            #prox_acc.append(i_prox / a)
-            prox_acc.append(max(n_prox))
-        else:
-            prox_acc.append(0)
 
-    return np.mean(prox_acc), prox_acc
+def segment_similarity(A, B, T=CLOSE_DISTANCE_THRESHOLD, debug=False, prepared=None):
+    """Directional legacy score; optionally reuse an index for unchanged A."""
+    if prepared is None:
+        with SegmentIndex(A, T) as owned:
+            return segment_similarity(A, B, T, debug, owned)
+    if prepared.threshold != T:
+        raise ValueError("Index threshold does not match similarity threshold")
+    parts = []
+    for i in range(len(B.points)-1):
+        ti, ti1 = B.points[i].gen2arr(), B.points[i+1].gen2arr()
+        best = 0.0
+        for candidate in prepared.tree.intersection(bounding_box_from(B.points, i, i+1, T)):
+            best = max(best, line_similarity(ti, ti1, prepared.coords[candidate],
+                                             prepared.coords[candidate+1], T, debug))
+        parts.append(best)
+    return (float(np.mean(parts)) if parts else 0.0), parts
 
 def sort_segment_points(Aps, Bps, debug = False):
     """Takes two line segments and sorts all their points,
@@ -270,19 +273,78 @@ def sort_segment_points(Aps, Bps, debug = False):
     Returns:
         Array with points ordered
     """
-    mid = []
-    j = 0
-    mid.append(Aps[0])
-    for i in range(len(Aps)-1):
-        dist = distance_tt_point(Aps[i], Aps[i+1], debug)
-        for m in range(j, len(Bps)):
-            distm = distance_tt_point(Aps[i], Bps[m], debug)
-            if dist > distm:
-                direction = dot(normalize(line(Aps[i].gen2arr(), Aps[i+1].gen2arr(), debug), debug), normalize(Bps[m].gen2arr(), debug), debug)
-                if direction > 0:
-                    j = m + 1
-                    mid.append(Bps[m])
-                    break
+    if not Aps:
+        return list(Bps)
+    # Query only points within the current edge's search radius, then retain
+    # the original B ordering and exact distance/direction acceptance rules.
+    tree = index.Index()
+    try:
+        for i, point in enumerate(Bps):
+            tree.insert(i, (point.lat, point.lon, point.lat, point.lon))
+        mid, j = [Aps[0]], 0
+        for i in range(len(Aps)-1):
+            point = Aps[i]
+            dist = distance_tt_point(point, Aps[i+1], debug)
+            candidates = sorted(tree.intersection((point.lat-dist, point.lon-dist,
+                                                   point.lat+dist, point.lon+dist)))
+            for m in candidates:
+                if m < j:
+                    continue
+                if dist > distance_tt_point(point, Bps[m], debug):
+                    direction = dot(normalize(line(point.gen2arr(), Aps[i+1].gen2arr(), debug), debug),
+                                    normalize(Bps[m].gen2arr(), debug), debug)
+                    if direction > 0:
+                        j = m+1
+                        mid.append(Bps[m])
+                        break
+            mid.append(Aps[i+1])
+        return mid
+    finally:
+        tree.close()
 
-        mid.append(Aps[i+1])
-    return mid
+
+class SegmentIndexCache:
+    """LRU bounded by both coordinates and entries; coordinates are revision keys."""
+    def __init__(self, max_points=100000, max_entries=512):
+        from collections import OrderedDict
+        self.entries = OrderedDict()
+        self.max_points = max_points
+        self.max_entries = max_entries
+        self.points = 0
+        self.oversized = None
+
+    def get(self, segment, threshold):
+        key = (threshold, tuple((p.lat, p.lon) for p in segment.points))
+        if key in self.entries:
+            self.entries.move_to_end(key)
+            return self.entries[key]
+        result = SegmentIndex(segment, threshold)
+        size = len(segment.points)
+        if size > self.max_points:
+            # One borrowed oversized index, replaced on the next miss.
+            if self.oversized:
+                self.oversized.close()
+            self.oversized = result
+            return result
+        self.entries[key] = result
+        self.points += size
+        while self.points > self.max_points or len(self.entries) > self.max_entries:
+            old_key, old = self.entries.popitem(last=False)
+            self.points -= len(old_key[1])
+            old.close()
+        return result
+
+    def close(self):
+        for entry in self.entries.values():
+            entry.close()
+        self.entries.clear()
+        self.points = 0
+        if self.oversized:
+            self.oversized.close()
+            self.oversized = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
