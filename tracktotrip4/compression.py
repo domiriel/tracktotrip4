@@ -9,8 +9,9 @@ import sys
 from math import sqrt
 from .point import Point
 
-# All of the compression methods require recursion.
-# Tracks with a huge number of points the default recursion limit (1000) could be a problem
+# The topology based methods (drp, td_tr) are recursive; with a huge number
+# of points the default recursion limit (1000) could be a problem. spt, the
+# one used on import, is a loop.
 sys.setrecursionlimit(10000)
 
 I_3600 = 1 / 3600.0
@@ -186,6 +187,8 @@ def spt(points, max_dist_error, max_speed_error, debug = False):
         International Conference on Extending Database Technology,
         Heraklion, Crete, Greece, March 14-18, 2004
 
+    A loop, not recursion: a detailed recording keeps any number of points.
+
     Args:
         points (:obj:`list` of :obj:`Point`)
         max_dist_error (float): max distance error, in meters
@@ -193,44 +196,52 @@ def spt(points, max_dist_error, max_speed_error, debug = False):
     Returns:
         :obj:`list` of :obj:`Point`
     """
-    if len(points) <= 2:
-        return points
-    else:
-        is_error = False
-        e = 1
-        while e < len(points) and not is_error:
-            i = 1
-            while i < e and not is_error:
-                delta_e = time_dist(points[e], points[0], debug) * I_3600
-                delta_i = time_dist(points[i], points[0], debug) * I_3600
+    kept = []
+    start = 0
+    while len(points) - start > 2:
+        error = _spt_first_error(points, start, max_dist_error, max_speed_error, debug)
+        if error is None:
+            return kept + [points[start], points[-1]]
+        kept.append(points[start])
+        start = error
+    return kept + points[start:]
 
-                di_de = 0
-                if delta_e != 0:
-                    di_de = delta_i / delta_e
-                d_lat = points[e].lat - points[0].lat
-                d_lon = points[e].lon - points[0].lon
-                point = Point(
-                    points[0].lat + d_lat * di_de,
-                    points[0].lon + d_lon * di_de,
-                    None
-                )
 
-                dt1 = time_dist(points[i], points[i-1], debug)
-                if dt1 == 0:
-                    dt1 = 0.000000001
-                dt2 = time_dist(points[i+1], points[i], debug)
-                if dt2 == 0:
-                    dt2 = 0.000000001
+def _spt_first_error(points, start, max_dist_error, max_speed_error, debug):
+    """ Index of the first point, from `start`, that the line (in space and
+    time) from points[start] can't stand for; None if there is none """
+    first = points[start]
+    count = len(points) - start
+    e = 1
+    while e < count:
+        end = points[start + e]
+        delta_e = time_dist(end, first, debug) * I_3600
+        i = 1
+        while i < e:
+            current = points[start + i]
+            delta_i = time_dist(current, first, debug) * I_3600
 
-                v_i_1 = loc_dist(points[i], points[i-1], debug) / dt1
-                v_i = loc_dist(points[i+1], points[i], debug) / dt2
+            di_de = 0
+            if delta_e != 0:
+                di_de = delta_i / delta_e
+            point = Point(
+                first.lat + (end.lat - first.lat) * di_de,
+                first.lon + (end.lon - first.lon) * di_de,
+                None
+            )
 
-                if loc_dist(points[i], point, debug) > max_dist_error or abs(v_i - v_i_1) > max_speed_error:
-                    is_error = True
-                else:
-                    i = i + 1
-            if is_error:
-                return [points[0]] + spt(points[i:len(points)], max_dist_error, max_speed_error, debug)
-            e = e + 1
-        if not is_error:
-            return [points[0], points[len(points)-1]]
+            dt1 = time_dist(current, points[start + i - 1], debug)
+            if dt1 == 0:
+                dt1 = 0.000000001
+            dt2 = time_dist(points[start + i + 1], current, debug)
+            if dt2 == 0:
+                dt2 = 0.000000001
+
+            v_i_1 = loc_dist(current, points[start + i - 1], debug) / dt1
+            v_i = loc_dist(points[start + i + 1], current, debug) / dt2
+
+            if loc_dist(current, point, debug) > max_dist_error or abs(v_i - v_i_1) > max_speed_error:
+                return start + i
+            i = i + 1
+        e = e + 1
+    return None
