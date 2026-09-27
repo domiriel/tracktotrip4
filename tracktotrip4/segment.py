@@ -13,7 +13,7 @@ from .location import infer_location
 from .similarity import sort_segment_points, closest_point
 from .compression import spt, drp
 from .transportation_mode import speed_clustering
-from .spatiotemporal_segmentation import spatiotemporal_segmentation
+from .spatiotemporal_segmentation import stay_segmentation
 
 def remove_liers(points, debug = False):
     """ Removes obvious noise points
@@ -131,18 +131,19 @@ class Segment(object):
             self.points = with_no_strategy(self.points, noise, self.debug)
         return self
 
-    def segment(self, eps, min_time):
-        """Spatio-temporal segmentation
+    def segment(self, stay_radius, stay_min_time, max_gap):
+        """Splits the segment into trips, at stays and recording gaps
 
-        See spatiotemporal_segmentation function
+        See stay_segmentation function
 
         Args:
-            eps (float): Maximum distance between two samples
-            min_time (float): Minimum time between to segment
+            stay_radius (float): meters within which points are one stay
+            stay_min_time (float): seconds a stay lasts at least
+            max_gap (float): seconds of recording gap after which a trip ends
         Returns:
-            :obj:`list` of :obj:`Point`
+            :obj:`list` of :obj:`list` of :obj:`Point`
         """
-        return spatiotemporal_segmentation(self.points, eps, min_time, self.debug)
+        return stay_segmentation(self.points, stay_radius, stay_min_time, max_gap, self.debug)
 
     def simplify(self, eps, max_dist_error, max_speed_error, topology_only=False):
         """ In-place segment simplification

@@ -1,129 +1,173 @@
 """
-Spatio-temporal segmentation of points
+Segmentation of points into trips, at stays and at gaps in the recording
 """
 import math
-import numpy as np
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import StandardScaler
 
-def temporal_segmentation(segments, min_time, debug = False):
-    """ Segments based on time distant points
+M_PER_DEG = 111195.0
 
-    Args:
-        segments (:obj:`list` of :obj:`list` of :obj:`Point`): segment points
-        min_time (int): minimum required time for segmentation
+#: Consecutive points outside a stay's radius needed to leave it; fewer are
+#: GPS jitter and stay part of it.
+LEAVE_POINTS = 3
+
+#: Speed (m/s) across a recording gap below which the gap is taken as a stop
+#: somewhere (e.g. indoors without a fix) rather than as travel without signal.
+GAP_MOVING_SPEED = 0.5
+
+
+def _metres(lat1, lon1, lat2, lon2):
+    """ Equirectangular distance, in meters: exact enough at stay scale """
+    x = (lon2 - lon1) * math.cos(math.radians((lat1 + lat2) / 2.0))
+    return math.hypot(x, lat2 - lat1) * M_PER_DEG
+
+
+def _seconds(point, previous):
+    return (point.time - previous.time).total_seconds()
+
+
+def _find_stays(points, stay_radius, stay_min_time, max_gap):
+    """ Single pass over points: stays as [first, last, lat, lon] and the
+        indexes that start a new trip after a gap (the previous point ends one)
     """
-    final_segments = []
-    for segment in segments:
-        final_segments.append([])
-        for point in segment:
-            if point.dt > min_time:
-                final_segments.append([])
-            final_segments[-1].append(point)
+    stays = []
+    breaks = []
+    start = last_inside = 0
+    count = 1
+    lat, lon = points[0].lat, points[0].lon
+    outside = 0
 
-    return final_segments
-
-def correct_segmentation(segments, clusters, min_time, debug = False):
-    """ Corrects the predicted segmentation
-
-    This process prevents over segmentation
-
-    Args:
-        segments (:obj:`list` of :obj:`list` of :obj:`Point`):
-            segments to correct
-        min_time (int): minimum required time for segmentation
-    """
-    # segments = [points for points in segments if len(points) > 1]
-
-    result_segments = []
-    prev_segment = None
-    for i, segment in enumerate(segments):
-        if len(segment) >= 1:
+    for k in range(1, len(points)):
+        point = points[k]
+        dist = _metres(lat, lon, point.lat, point.lon)
+        if dist <= stay_radius:
+            outside = 0
+            last_inside = k
+            count += 1
+            lat += (point.lat - lat) / count
+            lon += (point.lon - lon) / count
             continue
 
-        cluster = clusters[i]
-        if prev_segment is None:
-            prev_segment = segment
-        else:
-            cluster_dt = 0
-            if len(cluster) > 0:
-                cluster_dt = abs(cluster[0].time_difference(cluster[-1]))
-            if cluster_dt <= min_time:
-                prev_segment.extend(segment)
-            else:
-                prev_segment.append(segment[0])
-                result_segments.append(prev_segment)
-                prev_segment = segment
-    if prev_segment is not None:
-        result_segments.append(prev_segment)
+        gap = _seconds(point, points[k - 1])
+        stop_at_gap = gap > max_gap or (gap >= stay_min_time and _metres(
+            points[k - 1].lat, points[k - 1].lon, point.lat, point.lon) < GAP_MOVING_SPEED * gap)
+        outside += 1
+        if not stop_at_gap and outside < LEAVE_POINTS:
+            continue
 
-    return result_segments
+        if _seconds(points[last_inside], points[start]) >= stay_min_time:
+            stays.append([start, last_inside, lat, lon])
+        if stop_at_gap:
+            breaks.append(k)
+        start = last_inside = k
+        count = 1
+        lat, lon = point.lat, point.lon
+        outside = 0
 
-def spatiotemporal_segmentation(points, eps, min_time, debug = False):
-    """ Splits a set of points into multiple sets of points based on
-        spatio-temporal stays
+    if _seconds(points[last_inside], points[start]) >= stay_min_time:
+        stays.append([start, last_inside, lat, lon])
+    return stays, breaks
 
-    DBSCAN is used to predict possible segmentations,
-        furthermore we check to see if each clusters is big enough in
-        time (>=min_time). If that's the case than the segmentation is
-        considered valid.
 
-    When segmenting, the last point of the ith segment will be the same
-        of the (i-1)th segment.
+def _merge_returns(stays, breaks, stay_radius):
+    """ Consecutive stays at the same place are one stay: what was between them
+        didn't go anywhere
+    """
+    merged = []
+    b = 0
+    for stay in stays:
+        while b < len(breaks) and breaks[b] <= stay[0]:
+            b += 1
+        if merged:
+            last = merged[-1]
+            no_break = b == 0 or breaks[b - 1] <= last[1]
+            if no_break and _metres(last[2], last[3], stay[2], stay[3]) <= stay_radius:
+                last[1] = stay[1]
+                continue
+        merged.append(list(stay))
+    return merged
 
-    Segments are identified through clusters.
-    The last point of a clusters, that comes after a sub-segment A, will
-        be present on the sub-segment A.
+
+def _core(points, stay, core_radius, trim_first, trim_last):
+    """ First and last points of a stay close to its centre: the arrival and
+        departure, without the approach and departure walks it absorbed. Only
+        a side reached by moving is trimmed; otherwise the recording (or a gap)
+        begins or ends in the stay itself
+    """
+    first, last, lat, lon = stay
+    arrive, leave = first, last
+    while trim_first and arrive < last and \
+            _metres(lat, lon, points[arrive].lat, points[arrive].lon) > core_radius:
+        arrive += 1
+    while trim_last and leave > arrive and \
+            _metres(lat, lon, points[leave].lat, points[leave].lon) > core_radius:
+        leave -= 1
+    return arrive, leave
+
+
+def _goes_somewhere(points, first, last, stay_radius):
+    origin = points[first]
+    return any(_metres(origin.lat, origin.lon, p.lat, p.lon) > stay_radius
+               for p in points[first + 1:last + 1])
+
+
+def stay_segmentation(points, stay_radius, stay_min_time, max_gap, debug=False):
+    """ Splits points into trips: the movement between stays
+
+    A stay is a period of at least `stay_min_time` seconds during which the
+    points remain within `stay_radius` meters of their centre, whether they
+    were recorded (GPS left on: a "ball of wire") or not (a gap in the
+    recording that resumes at the same place). Stays are not part of trips, so
+    stationary stretches at the start or end of a recording are trimmed; a
+    trip ends where a stay begins and the next trip starts where it ends.
+
+    A recording gap resuming elsewhere splits too when it is longer than
+    `max_gap` seconds, or when it is at least `stay_min_time` long and too
+    slow to be travel without signal (then it is a stop that wasn't recorded).
+    Shorter gaps are joined. A trip that never leaves `stay_radius` of its
+    start is dropped.
+
+    Runs in linear time in the number of points.
 
     Args:
-        points (:obj:`list` of :obj:`Point`): segment's points
-        eps (float): Epsilon to feed to the DBSCAN algorithm.
-            Maximum distance between two samples, to be considered in
-            the same cluster.
-        min_time (float): Minimum time of a stay
+        points (:obj:`list` of :obj:`Point`): time ordered points
+        stay_radius (float): meters
+        stay_min_time (float): seconds
+        max_gap (float): seconds
     Returns:
-        :obj:`list` of :obj:`list` of :obj:`Point`: Initial set of
-            points in different segments
+        :obj:`list` of :obj:`list` of :obj:`Point`: the trips, each with at
+            least two points, in order
     """
-    # min time / sample rate
-    dt_average = np.median([point.dt for point in points])
-    if (dt_average == 0):
-        dt_average = 1
-    min_samples = max(min_time / dt_average, 1)
+    if len(points) < 2:
+        return []
 
-    data = [point.gen3arr() for point in points]
-    data = StandardScaler().fit_transform(data)
-    db_cluster = DBSCAN(eps=eps, min_samples=math.floor(min_samples)).fit(data)
-    labels = db_cluster.labels_
+    stays, breaks = _find_stays(points, stay_radius, stay_min_time, max_gap)
+    stays = _merge_returns(stays, breaks, stay_radius)
 
-    n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
+    # (end, next begin, bounded): a trip ends at a stay's arrival and the next
+    # begins at its departure; at a gap break it ends before the gap and
+    # begins after it. Between two stays movement is always a trip (they were
+    # not merged, so they are different places); elsewhere it must go somewhere
+    last = len(points) - 1
+    starts_after_break = set(breaks)
+    cuts = []
+    for stay in stays:
+        arrive, leave = _core(points, stay, stay_radius / 2.0,
+                              stay[0] != 0 and stay[0] not in starts_after_break,
+                              stay[1] != last and stay[1] + 1 not in starts_after_break)
+        cuts.append((arrive, leave, True))
+    cuts.extend((k - 1, k, False) for k in breaks)
+    cuts.sort()
 
-    segments = [[] for _ in range(n_clusters_+1)]
-    clusters = [[] for _ in range(n_clusters_+1)]
-    current_segment = 0
+    trips = []
+    begin, after_stay = 0, False
+    for end, next_begin, at_stay in cuts:
+        if end > begin and ((after_stay and at_stay) or
+                            _goes_somewhere(points, begin, end, stay_radius)):
+            trips.append(points[begin:end + 1])
+        if next_begin > begin:
+            begin, after_stay = next_begin, at_stay
+    if last > begin and _goes_somewhere(points, begin, last, stay_radius):
+        trips.append(points[begin:last + 1])
 
-    if n_clusters_ == 1:
-        segments = temporal_segmentation([points], min_time, debug)
-        return [segment for segment in segments if len(segment) > 1]
-
-    # split segments identified with dbscan
-    for i, label in enumerate(labels):
-        if label != -1 and label + 1 != current_segment:
-            current_segment = label + 1
-        point = points[i]
-        if label == -1:
-            segments[current_segment].append(point)
-        else:
-            clusters[label + 1].append(point)
-
-    if len(segments) == 0 or sum([len(s) for s in segments]):
-        segments = [points]
-
-    segments = temporal_segmentation(segments, min_time, debug)
-    # segments = temporal_segmentation(correct_segmentation(segments, clusters, min_time), min_time)
     if debug:
-        print('min_samples: %f' % min_samples)
-        print('clusters')
-        print(n_clusters_)
-    
-    return [segment for segment in segments if len(segment) > 1]
+        print('stays: %d, gap breaks: %d, trips: %d' % (len(stays), len(breaks), len(trips)))
+    return trips

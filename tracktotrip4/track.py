@@ -85,18 +85,18 @@ class Track(object):
             segment.smooth(noise, strategy)
         return self
 
-    def segment(self, eps, min_time):
+    def segment(self, stay_radius, stay_min_time, max_gap):
         """In-place segmentation of segments
 
-        Spatio-temporal segmentation of each segment
-        The number of segments may increse after this step
+        Splits each segment into trips, at stays and recording gaps (see
+        Segment.segment). The number of segments may change after this step
 
         Returns:
             This track
         """
         new_segments = []
         for segment in self.segments:
-            segmented = segment.segment(eps, min_time)
+            segmented = segment.segment(stay_radius, stay_min_time, max_gap)
             for seg in segmented:
                 new_segments.append(Segment(seg))
         self.segments = new_segments
@@ -146,8 +146,9 @@ class Track(object):
             smooth_strategy,
             smooth_noise,
             seg,
-            seg_eps,
-            seg_min_time,
+            seg_stay_radius,
+            seg_stay_min_time,
+            seg_max_gap,
             simplify,
             simplify_max_dist_error,
             simplify_max_speed_error
@@ -186,7 +187,7 @@ class Track(object):
 
         if seg:
             self.compute_metrics()
-            self.segment(seg_eps, seg_min_time)
+            self.segment(seg_stay_radius, seg_stay_min_time, seg_max_gap)
 
         if simplify:
             self.compute_metrics()

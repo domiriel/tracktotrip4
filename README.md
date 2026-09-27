@@ -41,7 +41,7 @@ A track can be transformed into a trip with the method ` to_trip `. Transforming
 
 1. Smooths the segments, using the [kalman filter](../master/tracktotrip3/smooth.py)
 
-2. Spatiotemporal segmentation for each segment, using the [DBSCAN algorithm](../master/tracktotrip3/spatiotemporal_segmentation.py) to find spatiotemporal clusters
+2. Splits each segment into trips at stays and recording gaps, using [stay segmentation](../master/tracktotrip4/spatiotemporal_segmentation.py)
 
 3. Compresses every segment, using [spatiotemporal-aware compression algorithm](../master/tracktotrip3/compression.py)
 
@@ -145,6 +145,18 @@ approximation of derived geometry only; keep original trip geometry for rebuildi
 Pass `max_points=None` to disable this cap for strict legacy geometry comparisons.
 `stats` also reports candidate, scored and pruned counts. A bound on representation
 size can change later matching decisions; compare those decisions on your fixtures.
+
+## Stay segmentation (0.3.0)
+
+`Track.to_trip(..., seg_stay_radius, seg_stay_min_time, seg_max_gap, ...)` replaces
+`seg_eps`/`seg_min_time`. Trips are the movement between stays: periods of at
+least `stay_min_time` seconds within `stay_radius` meters of their centre,
+recorded (GPS left on) or not (a gap resuming at the same place). Stationary
+stretches are not part of trips, so they are trimmed at the start and end of a
+recording. A gap resuming elsewhere also ends a trip when it is longer than
+`max_gap`, or when it lasts at least `stay_min_time` and is too slow to be travel
+without signal. Movement that never leaves `stay_radius` of its start is dropped,
+unless it goes from one stay to another. Segmentation is a single linear pass.
 
 Tests (offline, with dependencies installed):
 

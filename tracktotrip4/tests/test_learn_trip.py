@@ -22,8 +22,9 @@ class TestLearnTrip(unittest.TestCase):
             smooth_strategy="inverse",
             smooth_noise=1000,
             seg=True,
-            seg_eps=0.01,
-            seg_min_time=60,
+            seg_stay_radius=30,
+            seg_stay_min_time=300,
+            seg_max_gap=1800,
             simplify=True,
             simplify_max_dist_error=2,
             simplify_max_speed_error=1
@@ -35,8 +36,9 @@ class TestLearnTrip(unittest.TestCase):
             smooth_strategy="inverse",
             smooth_noise=1000,
             seg=True,
-            seg_eps=0.01,
-            seg_min_time=60,
+            seg_stay_radius=30,
+            seg_stay_min_time=300,
+            seg_max_gap=1800,
             simplify=True,
             simplify_max_dist_error=2,
             simplify_max_speed_error=1
