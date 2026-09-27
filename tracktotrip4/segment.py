@@ -14,6 +14,7 @@ from .similarity import sort_segment_points, closest_point
 from .compression import spt, drp
 from .transportation_mode import speed_clustering
 from .spatiotemporal_segmentation import stay_segmentation
+from .noise import remove_spikes
 
 def remove_liers(points, debug = False):
     """ Removes obvious noise points
@@ -25,8 +26,10 @@ def remove_liers(points, debug = False):
     Returns:
         :obj:`list` of :obj:`Point`
     """
+    if len(points) < 3:
+        return list(points)
     result = [points[0]]
-    for i in range(1, len(points) - 2):
+    for i in range(1, len(points) - 1):
         prv = points[i-1]
         crr = points[i]
         nxt = points[i+1]
@@ -100,15 +103,19 @@ class Segment(object):
         return Rect(bounds[0], bounds[1], bounds[2], bounds[3])
 
 
-    def remove_noise(self):
-        """In-place removal of noise points
+    def remove_noise(self, spike_min_distance=30):
+        """In-place removal of noise points: out of time order, and spikes
 
-        See `remove_noise` function
+        See `remove_liers` and `noise.remove_spikes`
 
+        Args:
+            spike_min_distance (float): meters; None keeps spikes
         Returns:
             :obj:`Segment`
         """
         self.points = remove_liers(self.points, self.debug)
+        if spike_min_distance:
+            self.points = remove_spikes(self.points, spike_min_distance)
         return self
 
     def smooth(self, noise, strategy=INVERSE_STRATEGY):

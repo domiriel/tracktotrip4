@@ -158,6 +158,19 @@ recording. A gap resuming elsewhere also ends a trip when it is longer than
 without signal. Movement that never leaves `stay_radius` of its start is dropped,
 unless it goes from one stay to another. Segmentation is a single linear pass.
 
+## Spikes and recording pieces (0.4.0)
+
+`Track.to_trip` takes three more optional arguments. Before anything else,
+consecutive segments (in time order) that start at most `join_max_gap` seconds
+(15) and `join_max_distance` meters (30) from where the previous one ended are
+joined: a logger restarting, or a day split over files, no longer splits a trip.
+Noise removal then drops spikes, as well as points out of time order: up to 3
+consecutive points that jump at least `spike_min_distance` meters (30) off the
+way and come back, far faster than the track was moving (both ways, or one way
+when the other spans a recording gap). A jump that the following points confirm,
+such as a fix recovered after losing signal, is kept. Both steps are linear;
+`spike_min_distance=None` keeps spikes.
+
 Tests (offline, with dependencies installed):
 
 ```sh
