@@ -3,7 +3,7 @@ Location module unit tests
 """
 import unittest
 from tracktotrip4 import Point
-from tracktotrip4.location import update_location_centroid, compute_centroid
+from tracktotrip4.location import update_location_centroid, compute_centroid, infer_location
 
 class TestLocation(unittest.TestCase):
     """
@@ -22,6 +22,24 @@ class TestLocation(unittest.TestCase):
         for i, point_a in enumerate(points_a):
             point_b = points_b[i]
             self.assert_point(point_a, point_b)
+
+    def infer(self, known):
+        """ The label infer_location gives a trip end at (0, 0), with known
+        places (label, meters north, visits) """
+        per_meter = 1 / 111195.0
+        query = lambda point, radius: [(label, Point(north * per_meter, 0, None), None, *visits)
+                                       for label, north, *visits in known]
+        return infer_location(Point(0, 0, None), query, 20, False, None, False, None, 5)
+
+    def test_nearest_known_place_without_visit_counts(self):
+        self.assertEqual(self.infer([('far', 40), ('near', 10)]).label, 'near')
+
+    def test_a_place_visited_often_beats_a_rare_one_a_bit_closer(self):
+        # home, 41 m away, against a playground next door recorded 3 times
+        self.assertEqual(self.infer([('playground', 12, 3), ('home', 41, 5324)]).label, 'home')
+
+    def test_between_places_visited_alike_the_nearer_wins(self):
+        self.assertEqual(self.infer([('cafe', 30, 400), ('shop', 8, 400)]).label, 'shop')
 
     def test_compute_centroid(self):
         """ Tests compute_centroid function

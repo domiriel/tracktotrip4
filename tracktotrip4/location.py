@@ -2,6 +2,7 @@
 Location class and methods
 """
 from datetime import datetime
+import math
 import requests
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -206,7 +207,10 @@ def infer_location(
 
     Args:
         points (:obj:`Point`): Point location to infer
-        location_query: Function with signature, (:obj:`Point`, int) -> (str, :obj:`Point`, ...)
+        location_query: Function with signature, (:obj:`Point`, int) -> list of
+            (str, :obj:`Point`, cluster[, visits]). With `visits` (how often the
+            place was recorded), known places are ranked by how likely each is
+            (see `place_score`), else by distance
         max_distance (float): Max distance to a position, in meters
         google_key (str): Valid google maps api key
         foursquare_key (str): Valid Foursquare API key
@@ -218,10 +222,13 @@ def infer_location(
 
     if location_query is not None:
         queried_locations = location_query(point, max_distance)
-        for (label, centroid, _) in queried_locations:
+        for (label, centroid, *rest) in queried_locations:
+            distance = centroid.distance(point)
+            visits = rest[1] if len(rest) > 1 and rest[1] else 0
             locations.append({
                 'label': label,
-                'distance': centroid.distance(point),
+                'distance': distance,
+                'score': place_score(distance, visits, max_distance),
                 # 'centroid': centroid,
                 'suggestion_type': 'KB'
                 })
@@ -244,11 +251,30 @@ def infer_location(
         api_locations = sorted(api_locations, key=lambda d: d['distance'])
 
     if len(locations) > 0:
-        locations = sorted(locations, key=lambda d: d['distance'])
+        locations = sorted(locations, key=lambda d: (-d['score'], d['distance']))
         locations = (locations + api_locations)[:limit]
         return Location(locations[0]['label'], point, locations)
     else:
         return Location('#?', point, api_locations)
+
+def place_score(distance, visits, max_distance):
+    """ How likely a known place is where a trip starts or ends: how often it
+    was recorded (the prior) and how far it is, a trip's end landing around the
+    place's centroid with an error of about `max_distance` meters. A place
+    visited thousands of times a few tens of meters away beats one visited once
+    right there; the same place far away doesn't. Without visits, the nearest
+    wins.
+
+    Args:
+        distance (float): meters from the place's centroid
+        visits (int): times the place was recorded
+        max_distance (float): meters
+    Returns:
+        float: higher is more likely
+    """
+    sigma = max(float(max_distance), 1.0)
+    return math.log1p(max(visits, 0)) - distance * distance / (2 * sigma * sigma)
+
 
 class Location(object):
     """ Location representation
