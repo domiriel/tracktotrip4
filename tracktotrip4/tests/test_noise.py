@@ -118,6 +118,13 @@ class RemoveSpikesTests(unittest.TestCase):
         points = rec.points + bad
         self.assertDropped(points, remove_spikes(points), bad)
 
+    def test_short_recording_starting_on_a_bad_fix_loses_only_it(self):
+        # a first fix 85 m off, then three fixes that agree: the start is the
+        # spike, not the rest of the recording
+        bad = point(0, 85, 0)
+        points = [bad, point(0, 0, 1), point(1, 6, 7), point(5, 3, 13)]
+        self.assertDropped(points, remove_spikes(points), [bad])
+
     def test_jump_after_losing_signal_is_kept(self):
         # underground: resumes 2 km on, 3 minutes later, and goes on from there
         rec = recorder().walk(300, 0).gap(180, dx=2000).walk(300, 0)

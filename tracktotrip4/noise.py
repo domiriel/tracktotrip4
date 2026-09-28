@@ -91,9 +91,11 @@ def _forward(points, min_distance):
                 break
         if back is not None:
             i = back
-        elif n - i <= SPIKE_POINTS and \
+        # the recording ends on a jump to one spot; unless that's most of it:
+        # then it starts on a bad fix, which the backward pass drops
+        elif n - i <= SPIKE_POINTS and n - i < len(kept) and \
                 all(_distance(point, p) < min_distance for p in points[i + 1:]):
-            break           # the recording ends on a jump to one spot
+            break
         else:
             recent.append(_distance(anchor, point) / _seconds(anchor, point))
             kept.append(point)  # it stays there: a real relocation (lost signal)
